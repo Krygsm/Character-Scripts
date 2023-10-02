@@ -1,0 +1,779 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using stats;
+
+public enum AttackType {
+    melee,
+    ranged,
+    mage,
+}
+public class Character : MonoBehaviour
+{
+    public CharacterStat health;
+    public CharacterStat HealthRegen;
+
+    public CharacterStat mana;
+    public CharacterStat ManaRegen;
+
+    public CharacterStat MovementSpeed;
+
+    public AttackType attackType;
+    public CharacterStat AttackRange;
+    public CharacterStat AttackSpeed;
+
+    public CharacterStat AttackDamage;
+    public CharacterStat MagicDamage;
+
+    public CharacterStat AttackArmor;
+    public CharacterStat MagicArmor;
+
+    public CharacterStat Mitigate;
+
+    public CharacterStat PhysicalPierce;
+    public CharacterStat PhysicalTear;
+
+    public CharacterStat MagicalPierce;
+    public CharacterStat MagicalTear;
+
+    public CharacterStat CriticalChance;
+    public CharacterStat CooldownReduction;
+
+    public int Team;
+
+    public Ability[] Abilities;
+    public List<StatusEffect> StatusEffects = new List<StatusEffect>();
+
+    public StatusCache statusCache;
+
+    public Sprite[] HitSprites;
+
+    void Start()
+    {
+        Abilities = GetComponents<Ability>();
+        statusCache = GameObject.Find("StatusCache").GetComponent<StatusCache>();
+    }
+
+    void Update()
+    {
+        
+    }
+}
+
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CharacterArmor : MonoBehaviour
+{
+    private Character character;
+
+    public float PhysicalReduction;
+    public float MagicalReduction;
+
+    void Start()
+    {
+        character = GetComponent<Character>();
+    }
+
+    void Update()
+    {
+    }
+
+    public void CalculateArmor()
+    {
+        float PA;
+        float MA;
+
+        PA = character.AttackArmor.Value;
+        MA = character.MagicArmor.Value;
+
+        PhysicalReduction = ((-45)/(PA+50)+0.9f);
+        MagicalReduction = ((-45)/(MA+50)+0.9f);
+    }
+}
+
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.AI;
+using moba.damage;
+
+public class CharacterController : MonoBehaviour
+{
+    public NavMeshAgent agent;
+    private RaycastHit hit;
+    private Character character;
+
+    [HideInInspector] public GameObject target;
+    public CharacterController targetCC;
+    [HideInInspector] public float distance;
+    [HideInInspector] public bool isStatic;
+    [HideInInspector] public float AttackProc;
+    
+    [HideInInspector] public CharacterHealth Health;
+    [HideInInspector] public CharacterMana Mana;
+    [HideInInspector] public CharacterArmor Armor;
+    [HideInInspector] public CharacterDamage Damage;
+
+
+
+    public bool isActive;
+    public bool isControllable;
+    public bool canAttack;
+    public bool canCast;
+
+    public bool CastReady;
+
+    public bool hasAttacked;
+    public bool gotAttacked;
+
+    public bool hitAbility;
+    public bool hitByAbility;
+
+    void Start()
+    {
+        character = GetComponent<Character>();
+        agent = GetComponent<NavMeshAgent>();
+
+        Health = GetComponent<CharacterHealth>();
+        Mana = GetComponent<CharacterMana>();
+        Armor = GetComponent<CharacterArmor>();
+        Damage = GetComponent<CharacterDamage>();
+
+        agent.speed = character.MovementSpeed.Value/100;
+    }
+
+    void Update()
+    {
+        if(!isActive) return;
+
+        if(isControllable)
+        {
+        if(Input.GetMouseButtonDown(1))
+        {
+            Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+
+            if(Physics.Raycast(ray, out hit, Mathf.Infinity))
+            {
+                if(hit.collider.tag == "Untagged")
+                {
+                    agent.SetDestination(hit.point);
+                    target = null;
+                    targetCC = null;
+
+                } else if(hit.collider.tag == "enemy")
+                {
+                    target = hit.transform.gameObject;
+                    targetCC = target.GetComponent<CharacterController>();
+
+                    MoveToTarget();
+                }
+            }
+        }
+        }
+        else
+        {
+            target = null;
+        }
+
+            if(target != null)
+            {   
+                MoveToTarget();
+            }
+
+        IsStatic();
+        ReadyAttack();
+
+        if(canCast)
+        {
+        Cast(KeyCode.Q, 0);
+        Cast(KeyCode.W, 1);
+        //Cast(KeyCode.E, 2);
+        //Cast(KeyCode.R, 3);
+        }
+    }
+
+    public void LateUpdate()
+    {
+        if(hasAttacked)
+        {
+        hasAttacked = false;
+        }
+        if(gotAttacked)
+        {
+        gotAttacked = false;
+        }
+        if(hitAbility)
+        {
+            hitAbility = false;
+        }
+        if(hitByAbility)
+        {
+            hitByAbility = false;
+        }
+    }
+
+    public void IsStatic()
+    {
+        if(agent.velocity.magnitude == 0f)
+        {
+            isStatic = true;
+        } else {
+            isStatic = false;
+        }
+    }
+
+    void MoveToTarget()
+    {
+        agent.SetDestination(target.transform.position);
+        distance = Vector3.Distance(transform.position, target.transform.position);
+        
+        if(canAttack)
+        {
+        if(target.tag == "enemy")
+        {
+            if(distance <= (character.AttackRange.Value/100))
+            {
+                agent.SetDestination(transform.position);
+                
+                
+                PerformAttack();
+            } else {
+                agent.SetDestination(target.transform.position);
+            }
+        }
+        } else {
+            agent.SetDestination(target.transform.position);
+        }
+    }
+
+    void ReadyAttack()
+    {
+        if(AttackProc >= (1/character.AttackSpeed.Value)) return;
+
+        AttackProc += Time.deltaTime;
+    }
+
+    void PerformAttack()
+    {
+        if(!isStatic) return;
+
+        if(AttackProc >= 1/character.AttackSpeed.Value)
+        {
+            Damage.AutoAttack(target.GetComponent<CharacterController>());
+
+            targetCC.gotAttacked = true;
+            hasAttacked = true;
+
+            AttackProc = 0;
+        }
+
+    }
+
+    void Cast(KeyCode key, int num)
+    {   
+        if(character.Abilities[num].AbilityCost <= Mana.CurMana)
+        {
+        if(Input.GetKeyDown(key))
+        {
+            if(character.Abilities[num].castType == CastType.instant)
+            {
+                character.Abilities[num].AbilityCast();
+            }
+            else
+            {
+                character.Abilities[num].Indicator();
+                CastReady = true;
+            }
+        }
+
+        if(CastReady)
+        {
+            if(Input.GetKeyUp(key))
+                {
+                    character.Abilities[num].AbilityCast();
+                    CastReady = false;
+                }
+        }
+        }
+    }
+}
+
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace moba.damage
+{
+public class CharacterDamage : MonoBehaviour
+{
+    private CharacterController characterController;
+    private Character character;
+
+    public List<Damage> OnHitDamage;
+    public List<Damage> AbilityDamage;
+
+    public float OnHitPhysical, OnHitMagic, OnHitAbsolute;
+    public float AbilityPhysical, AbiltiyMagic, AbilityAbsolute;
+
+    CharacterDamage()
+    {
+        OnHitDamage = new List<Damage>();
+        AbilityDamage = new List<Damage>();
+    }
+    
+    public void Start()
+    {
+        characterController = GetComponent<CharacterController>();
+        character = GetComponent<Character>();
+
+        float PhysicalDMG = character.AttackDamage.Value;
+        float MagicDMG = character.MagicDamage.Value;
+
+        OnHitAdd(new Damage(PhysicalDMG, DamageType.Physical));
+    }
+
+    public void Update()
+    {
+        if(Input.GetKeyUp("space"))
+        {
+            OnHitAdd(new Damage(20f, DamageType.Physical));
+            OnHitAdd(new Damage(20f, DamageType.Magical));
+
+            CalculateOnHitDamage();
+
+            Debug.Log(OnHitPhysical);
+            Debug.Log(OnHitMagic);
+        }
+    }
+
+    public void OnHitAdd(Damage dmg)
+    {
+        OnHitDamage.Add(dmg);
+    }
+
+    public void OnHitRemove(Damage dmg)
+    {
+        OnHitDamage.Remove(dmg);
+    }
+
+    public void AbilityAdd(Damage dmg)
+    {
+        AbilityDamage.Add(dmg);
+    }
+
+    public void AbilityRemove(Damage dmg)
+    {
+        AbilityDamage.Add(dmg);
+    }
+
+    public void CalculateOnHitDamage()
+    {
+        OnHitAbsolute = 0;
+        OnHitPhysical = 0;
+        OnHitMagic = 0;
+
+        for(int i = 0; i < OnHitDamage.Count; i++)
+        {
+            Damage dmg = OnHitDamage[i];
+
+            if(dmg.Type == DamageType.Physical)
+            {
+                OnHitPhysical += dmg.Value;
+            } else if(dmg.Type == DamageType.Magical)
+            {
+                OnHitMagic += dmg.Value;
+            } else if(dmg.Type == DamageType.Absolute)
+            {
+                OnHitAbsolute += dmg.Value; 
+            }
+        }
+    }
+
+    public void CalculateAbilityDamage()
+    {
+        AbilityPhysical = 0;
+        AbiltiyMagic = 0;
+
+        for(int i = 0; i < AbilityDamage.Count; i++)
+        {
+            Damage dmg = AbilityDamage[i];
+
+            if(dmg.Type == DamageType.Physical)
+            {
+                AbilityPhysical += dmg.Value;
+            } else if(dmg.Type == DamageType.Magical)
+            {
+                AbiltiyMagic += dmg.Value;
+            }
+        }
+    }
+
+    public void AutoAttack(CharacterController target)
+    {
+        float TargetAR;
+        float TargetMR;
+
+        target.Armor.CalculateArmor();
+
+        TargetAR = ((1-target.Armor.PhysicalReduction) / (1-character.PhysicalTear.Value*0.01f)) + (character.PhysicalPierce.Value*0.01f);
+        TargetMR = ((1-target.Armor.MagicalReduction) / (1-character.MagicalTear.Value*0.01f)) + (character.MagicalPierce.Value*0.01f);
+
+        CalculateOnHitDamage();
+
+        if(TargetAR >= 1)
+        {
+            OnHitAbsolute += OnHitPhysical;
+            OnHitPhysical = 0;
+        }
+        if(TargetMR >= 1)
+        {
+            OnHitAbsolute += OnHitMagic;
+            OnHitMagic = 0;
+        }
+
+        target.Health.DealDamage(OnHitPhysical*TargetAR, OnHitMagic*TargetMR, OnHitAbsolute);
+
+    }
+
+    public void DealAbility(CharacterController target, Damage abilityDamage)
+    {
+        float TargetAR;
+        float TargetMR;
+
+        target.Armor.CalculateArmor();
+
+        TargetAR = ((1-target.Armor.PhysicalReduction) / (1-character.PhysicalTear.Value*0.01f)) + (character.PhysicalPierce.Value*0.01f);
+        TargetMR = ((1-target.Armor.MagicalReduction) / (1-character.MagicalTear.Value*0.01f)) + (character.MagicalPierce.Value*0.01f);
+
+        CalculateAbilityDamage();
+
+        if(TargetAR >= 1)
+        {
+            AbilityAbsolute += AbilityPhysical;
+            AbilityPhysical = 0;
+        }
+        if(TargetMR >= 1)
+        {
+            AbilityAbsolute += AbiltiyMagic;
+            AbiltiyMagic = 0;
+        }
+
+        characterController.hitAbility = true;
+        target.hitByAbility = true;
+
+        target.Health.DealDamage(AbilityPhysical*TargetAR, AbiltiyMagic*TargetMR, AbilityAbsolute);
+    }
+}
+}
+
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CharacterGold : MonoBehaviour
+{
+    public int Gold;
+
+    public int Income;
+
+    private float Tick;
+
+    void Update()
+    {
+        Tick += Time.deltaTime;
+
+        if(Tick >= 1)
+        {
+            Gold+=Income;
+            Tick=0f;
+        }
+    }
+}
+
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CharacterHealth : MonoBehaviour
+{
+    private Character character;
+
+    public float CurHealth;
+    public float MinHealth;
+    public float MaxHealth;
+
+    public float HealthRegen;
+    public bool CanHeal;
+
+    private float Tick = 0;
+    private float hpCD = 0;
+
+    public bool HealthLost;
+
+    private float HPCache;
+
+    void Start()
+    {
+        character = GetComponent<Character>();
+        MaxHealth = character.health.Value;
+        HealthRegen = character.HealthRegen.Value;
+
+        CurHealth = MaxHealth;
+    }
+
+    void Update()
+    {
+        RegenHealth();
+
+        if(CurHealth > MaxHealth)
+        {
+            CurHealth = MaxHealth;
+        }
+    }
+
+    void LateUpdate()
+    {
+        
+        if(HealthLost)
+        {
+        HealthLost = false;
+        }
+    }
+
+    public void DealDamage(float physical, float magical, float absolute)
+    {
+        float mitigated = character.Mitigate.Value;
+
+        CurHealth -= ((physical-mitigated)+magical+absolute);
+
+        HealthLost = true;
+    }
+
+    public void RegenHealth()
+    {
+        if(CurHealth < MaxHealth)
+        {
+        if(CanHeal)
+        {
+            Tick += Time.deltaTime;
+
+            if(Tick >= 1f)
+            {
+                CurHealth += HealthRegen;
+                
+                Tick = 0;
+            }
+        } else {
+            hpCD += Time.deltaTime;
+
+            if(hpCD >= 5f)
+            {
+                CanHeal = true;
+                hpCD = 0;
+            }
+        }
+        }
+    }
+}
+
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class CharacterInventory : MonoBehaviour
+{
+    public Character character;
+    public CharacterGold gold;
+
+    public List<Item> items = new List<Item>();
+
+    public int InvCap = 8;
+
+    public Item testItem1;
+    public Item testItem2;
+
+    public Item testItem3;
+    public Item testItem4;
+
+    void Start()
+    {
+        character = GetComponent<Character>();
+        gold = GetComponent<CharacterGold>();
+    }
+    void Update()
+    {
+        if(Input.GetKeyUp(KeyCode.U))
+        {
+          Equip(testItem1);
+        }
+        if(Input.GetKeyUp(KeyCode.I))
+        {
+          Equip(testItem2);
+        }
+        if(Input.GetKeyUp(KeyCode.O))
+        {
+          Equip(testItem3);
+        }
+        if(Input.GetKeyUp(KeyCode.P))
+        {
+          Equip(testItem4);
+        }
+        if(Input.GetKeyUp(KeyCode.U))
+        {
+          for(int i = 0; i < items.Count; i++)
+          {
+            items[i] = null;
+          }
+        }
+    }
+
+    void Equip(Item item)
+    {
+        if (items.Count == InvCap) return;
+
+        item.AddStats(character);
+        items.Add(item);
+
+        gold.Gold -= item.ItemCost;
+    }
+
+    void Remove(Item item)
+    {
+      item.RemoveStats(character);
+      items.Remove(item);
+
+      gold.Gold += Mathf.RoundToInt(item.ItemCost*0.75f);
+    }
+}
+
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+public enum ManaType {
+    mana,
+    stamina,
+    none,
+}
+
+public class CharacterMana : MonoBehaviour
+{
+    private Character character;
+    public ManaType type;
+
+    public float CurMana;
+    public float MaxMana;
+
+    public float ManaRegen;
+
+    private float Tick = 0f;
+
+    void Start()
+    {
+        character = GetComponent<Character>();
+
+        MaxMana = character.mana.Value;
+        ManaRegen = character.ManaRegen.Value;
+
+        CurMana = MaxMana;
+        
+    }
+
+    void Update()
+    {
+        RegenerateMana();
+
+        if(CurMana > MaxMana)
+        {
+            CurMana = MaxMana;
+        }
+    }
+
+    void RegenerateMana()
+    {
+        if(CurMana >= MaxMana) return;
+
+        Tick += Time.deltaTime;
+
+        if(Tick >= 1)
+        {
+            CurMana += ManaRegen;
+
+            Tick = 0f;
+        }
+    }
+}
+
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace stats 
+{
+[Serializable]
+public class CharacterStat
+{
+    public float BaseValue;
+
+    [HideInInspector]public float FlatAddValue;
+    [HideInInspector]public float PercentAddValue;
+    [HideInInspector]public float PercentMultiValue;
+    
+    public float Value;
+    
+
+    public List<StatModifier> statModifiers;
+
+    CharacterStat()
+    {
+        statModifiers = new List<StatModifier>();
+    }
+    
+    CharacterStat(float baseValue)
+    {
+        BaseValue = baseValue;
+    }
+
+    public void AddModifier(StatModifier mod)
+    {
+        statModifiers.Add(mod);
+        CalculateFinalValue();
+        
+    }
+
+    public void RemoveModifier(StatModifier mod)
+    {
+        statModifiers.Remove(mod);
+        CalculateFinalValue();
+    }
+
+    public void CalculateFinalValue()
+    {
+        FlatAddValue = 0;
+        PercentAddValue = 1;
+        PercentMultiValue = 1;
+
+        for(int i = 0; i < statModifiers.Count; i++)
+        {
+            StatModifier mod = statModifiers[i];
+
+            if(mod.Type == StatType.Flat)
+            {
+                FlatAddValue += mod.Value;
+            }
+            else if(mod.Type == StatType.PercentAdd)
+            {
+                PercentAddValue += mod.Value;
+            } else if(mod.Type == StatType.PercentMulti)
+            {
+                PercentMultiValue *= 1 + mod.Value;
+            }
+        }
+
+        Value = (int)Math.Round(((BaseValue + FlatAddValue) * PercentAddValue) * PercentMultiValue);
+    }
+}
+}
